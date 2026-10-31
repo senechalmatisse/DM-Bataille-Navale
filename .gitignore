@@ -1,0 +1,18 @@
+# Maven
+target/
+
+# Compilation manuelle
+build/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# Systeme
+.DS_Store
+Thumbs.db
