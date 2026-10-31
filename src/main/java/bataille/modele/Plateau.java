@@ -24,6 +24,8 @@ public final class Plateau {
     private final boolean[][] vise;
     /** Le nombre de tirs reçus, sans compter les tirs sur une case déjà visée. */
     private int nombreTirsRecus;
+    /** Les radars passés par l'adversaire sur ce plateau. */
+    private final List<Detection> detections = new ArrayList<>();
     /** La vue du plateau donnée à l'adversaire. */
     private final VuePlateau vueAdverse = new VueAdverse();
 
@@ -224,6 +226,43 @@ public final class Plateau {
     }
 
     /**
+     * Passe un radar de l'adversaire : compte les cases de bateaux parmi les cases pas encore visées
+     * d'un carré de 3 × 3, coupé aux bords de la grille. Le résultat reste visible dans la vue adverse.
+     *
+     * @param centre le centre du carré
+     * @return la détection
+     * @throws IllegalArgumentException si le centre est hors de la grille
+     */
+    public Detection sonder(Coordonnee centre) {
+        verifierDansLaGrille(centre);
+        List<Coordonnee> cases = new ArrayList<>();
+        int nombre = 0;
+        for (int deltaLigne = -1; deltaLigne <= 1; deltaLigne++) {
+            for (int deltaColonne = -1; deltaColonne <= 1; deltaColonne++) {
+                Coordonnee coordonnee = centre.decaler(deltaLigne, deltaColonne);
+                if (contient(coordonnee) && !vise[coordonnee.ligne()][coordonnee.colonne()]) {
+                    cases.add(coordonnee);
+                    if (occupation[coordonnee.ligne()][coordonnee.colonne()] != null) {
+                        nombre++;
+                    }
+                }
+            }
+        }
+        Detection detection = new Detection(centre, cases, nombre);
+        detections.add(detection);
+        return detection;
+    }
+
+    /**
+     * Retourne les radars passés sur ce plateau.
+     *
+     * @return les détections, dans l'ordre, dans une liste non modifiable
+     */
+    public List<Detection> getDetections() {
+        return Collections.unmodifiableList(detections);
+    }
+
+    /**
      * Retourne le nombre de tirs reçus, sans compter les tirs sur une case déjà visée.
      *
      * @return le nombre de tirs reçus
@@ -307,7 +346,17 @@ public final class Plateau {
         @Override
         public EtatCase getEtat(Coordonnee coordonnee) {
             EtatCase etat = getEtatPourProprietaire(coordonnee);
-            return etat == EtatCase.EAU || etat == EtatCase.BATEAU ? EtatCase.INCONNUE : etat;
+            if (etat == EtatCase.EAU || etat == EtatCase.BATEAU) {
+                boolean videDetecte = detections.stream()
+                        .anyMatch(detection -> detection.nombre() == 0 && detection.couvre(coordonnee));
+                return videDetecte ? EtatCase.VIDE : EtatCase.INCONNUE;
+            }
+            return etat;
+        }
+
+        @Override
+        public List<Detection> getDetections() {
+            return Collections.unmodifiableList(detections);
         }
 
         @Override

@@ -6,11 +6,11 @@
 
   <groupId>fr.unicaen.bataille</groupId>
   <artifactId>bataille-navale</artifactId>
-  <version>2.0.0</version>
+  <version>3.0.0</version>
   <packaging>jar</packaging>
 
   <name>Bataille navale</name>
-  <description>Jeu de bataille navale en Java, en console et avec une interface Swing.</description>
+  <description>Jeu de bataille navale en Java, contre l'ordinateur ou à deux, en console et avec une interface Swing.</description>
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>

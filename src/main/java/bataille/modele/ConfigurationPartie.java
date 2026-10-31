@@ -4,15 +4,16 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Les règles d'une partie : la taille de la grille et la flotte de chaque joueur.
+ * Les règles d'une partie : la taille de la grille, la flotte de chaque joueur et l'usage des capacités spéciales.
  * <p>
  * Une configuration est toujours jouable : la construction refuse une grille trop petite ou trop grande,
  * et une flotte qui occuperait plus de la moitié de la grille.
  *
  * @param taille le nombre de lignes et de colonnes de la grille
  * @param flotte les types de bateaux de chaque joueur
+ * @param capacites si les capacités spéciales sont permises
  */
-public record ConfigurationPartie(int taille, List<TypeBateau> flotte) {
+public record ConfigurationPartie(int taille, List<TypeBateau> flotte, boolean capacites) {
     /** La plus petite grille acceptée. */
     public static final int TAILLE_MIN = 5;
     /** La plus grande grille acceptée : une lettre par colonne, de A à Z. */
@@ -25,6 +26,7 @@ public record ConfigurationPartie(int taille, List<TypeBateau> flotte) {
      *
      * @param taille le nombre de lignes et de colonnes de la grille
      * @param flotte les types de bateaux de chaque joueur
+     * @param capacites si les capacités spéciales sont permises
      * @throws IllegalArgumentException si la grille ou la flotte ne conviennent pas
      */
     public ConfigurationPartie {
@@ -54,7 +56,17 @@ public record ConfigurationPartie(int taille, List<TypeBateau> flotte) {
     }
 
     /**
-     * Retourne la configuration réglementaire : grille 10×10 et flotte classique.
+     * Construit une configuration sans capacités spéciales : les règles classiques.
+     *
+     * @param taille le nombre de lignes et de colonnes de la grille
+     * @param flotte les types de bateaux de chaque joueur
+     */
+    public ConfigurationPartie(int taille, List<TypeBateau> flotte) {
+        this(taille, flotte, false);
+    }
+
+    /**
+     * Retourne la configuration réglementaire : grille 10×10, flotte classique, sans capacités spéciales.
      *
      * @return la configuration classique
      */
@@ -63,7 +75,7 @@ public record ConfigurationPartie(int taille, List<TypeBateau> flotte) {
     }
 
     /**
-     * Construit une configuration à partir d'une taille et d'un modèle de flotte.
+     * Construit une configuration sans capacités spéciales à partir d'une taille et d'un modèle de flotte.
      *
      * @param taille le nombre de lignes et de colonnes de la grille
      * @param modele le modèle de flotte
@@ -72,6 +84,16 @@ public record ConfigurationPartie(int taille, List<TypeBateau> flotte) {
      */
     public static ConfigurationPartie de(int taille, ModeleFlotte modele) {
         return new ConfigurationPartie(taille, modele.getTypes());
+    }
+
+    /**
+     * Retourne la même configuration, avec ou sans capacités spéciales.
+     *
+     * @param avecCapacites si les capacités spéciales sont permises
+     * @return la nouvelle configuration
+     */
+    public ConfigurationPartie avecCapacites(boolean avecCapacites) {
+        return new ConfigurationPartie(taille, flotte, avecCapacites);
     }
 
     /**

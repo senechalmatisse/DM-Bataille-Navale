@@ -38,9 +38,17 @@ public interface VuePlateau {
      * Retourne l'état connu d'une case.
      *
      * @param coordonnee une case de la grille
-     * @return {@link EtatCase#INCONNUE}, {@link EtatCase#MANQUE}, {@link EtatCase#TOUCHE} ou {@link EtatCase#COULE}
+     * @return {@link EtatCase#INCONNUE}, {@link EtatCase#VIDE}, {@link EtatCase#MANQUE}, {@link EtatCase#TOUCHE}
+     *         ou {@link EtatCase#COULE}
      */
     EtatCase getEtat(Coordonnee coordonnee);
+
+    /**
+     * Retourne les radars passés sur ce plateau et leurs résultats.
+     *
+     * @return les détections, dans l'ordre
+     */
+    List<Detection> getDetections();
 
     /**
      * Retourne les bateaux déjà coulés, dont la position est désormais connue.

@@ -64,7 +64,7 @@ public final class CarteProbabilites implements StrategieTir {
      * @param modeCible si seules les positions qui couvrent une touche comptent
      * @return la carte des poids, indexée par ligne puis colonne
      */
-    private static long[][] calculerCarte(VuePlateau vue, boolean modeCible) {
+    static long[][] calculerCarte(VuePlateau vue, boolean modeCible) {
         int taille = vue.getTaille();
         long[][] carte = new long[taille][taille];
         for (TypeBateau type : vue.getTypesRestants()) {
@@ -87,7 +87,7 @@ public final class CarteProbabilites implements StrategieTir {
                 return;
             }
             EtatCase etat = vue.getEtat(coordonnee);
-            if (etat == EtatCase.MANQUE || etat == EtatCase.COULE) {
+            if (etat == EtatCase.MANQUE || etat == EtatCase.COULE || etat == EtatCase.VIDE) {
                 return;
             }
             if (etat == EtatCase.TOUCHE) {

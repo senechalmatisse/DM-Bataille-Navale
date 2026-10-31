@@ -1,35 +1,32 @@
 package bataille.swing;
 
-import bataille.modele.Bateau;
-import bataille.modele.ConfigurationPartie;
-import bataille.modele.Coordonnee;
-import bataille.modele.EtatCase;
-import bataille.modele.Orientation;
-import bataille.modele.PlacementAleatoire;
-import bataille.modele.Plateau;
-import bataille.modele.Tir;
-import bataille.modele.TypeBateau;
-import bataille.modele.VuePlateau;
-import bataille.partie.Annonces;
-import bataille.partie.Joueur;
+import bataille.donnees.Dossiers;
+import bataille.donnees.FichierPartie;
+import bataille.donnees.PreferencesJeu;
+import bataille.donnees.ResumeStatistiques;
+import bataille.donnees.StatistiquesCumulees;
+import bataille.modele.Capacite;
+import bataille.partie.EnregistrementPartie;
+import bataille.partie.ModeJeu;
 import bataille.partie.ParametresPartie;
-import bataille.partie.Partie;
-import java.awt.BorderLayout;
-import java.awt.FlowLayout;
-import java.awt.Font;
-import java.awt.GridLayout;
-import java.awt.event.ActionEvent;
+import java.awt.CardLayout;
+import java.awt.Dimension;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Random;
-import javax.swing.AbstractAction;
-import javax.swing.BorderFactory;
-import javax.swing.JButton;
-import javax.swing.JComponent;
+import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JMenu;
@@ -38,353 +35,402 @@ import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.KeyStroke;
-import javax.swing.Timer;
-import javax.swing.UIManager;
-import javax.swing.border.TitledBorder;
+import javax.swing.event.MenuEvent;
+import javax.swing.event.MenuListener;
+import javax.swing.filechooser.FileNameExtensionFilter;
 
 /**
- * La fenêtre du jeu : la flotte du joueur à gauche, la flotte ennemie à droite, une barre d'état en haut.
- * <p>
- * Le joueur tire en cliquant sur la grille de droite ; l'ordinateur répond tout seul après un court délai,
- * pendant lequel les clics sont ignorés. Toutes les règles passent par {@link Partie}.
+ * La fenêtre du jeu. Elle passe d'un écran à l'autre (accueil, partie, rejeu, statistiques), porte les menus et
+ * s'occupe des fichiers : préférences, parties enregistrées et statistiques.
  */
-public final class FenetreJeu extends JFrame {
+public final class FenetreJeu extends JFrame implements EcranJeu.Navigation, EcranAccueil.Actions {
     private static final long serialVersionUID = 1L;
-    /** Le délai avant le tir de l'ordinateur, pour laisser voir le résultat du tir du joueur. */
-    private static final int DELAI_ORDINATEUR_MS = 600;
-    /** La taille des icônes de la légende. */
-    private static final int COTE_ICONE = 16;
+    /** L'écran d'accueil. */
+    private static final String ACCUEIL = "accueil";
+    /** L'écran de jeu. */
+    private static final String JEU = "jeu";
+    /** L'écran de rejeu. */
+    private static final String REJEU = "rejeu";
+    /** L'écran des statistiques. */
+    private static final String STATISTIQUES = "statistiques";
 
-    /** Le générateur de hasard des placements et de l'ordinateur. */
-    private final transient Random random;
-    /** Les derniers paramètres choisis. */
-    private transient ParametresPartie parametres = ParametresPartie.parDefaut();
-    /** La partie en cours, ou {@code null} pendant le placement. */
-    private transient Partie partie;
-    /** Le plateau du joueur, en cours de placement ou de jeu. */
-    private transient Plateau plateauJoueur;
-    /** Les bateaux à placer à la main, vide hors placement. */
-    private transient List<TypeBateau> aPlacer = List.of();
-    /** L'indice du prochain bateau à placer. */
-    private int indexAPlacer;
-    /** L'orientation du prochain bateau à placer. */
-    private Orientation orientation = Orientation.HORIZONTALE;
-
-    /** La grille du joueur. */
-    private final PanneauGrille grilleJoueur = new PanneauGrille(ConfigurationPartie.TAILLE_PAR_DEFAUT);
-    /** La grille de la flotte ennemie. */
-    private final PanneauGrille grilleAdverse = new PanneauGrille(ConfigurationPartie.TAILLE_PAR_DEFAUT);
-    /** Le titre au-dessus de la grille du joueur. */
-    private final TitledBorder titreJoueur = BorderFactory.createTitledBorder("Votre flotte");
-    /** Le titre au-dessus de la grille ennemie. */
-    private final TitledBorder titreAdverse = BorderFactory.createTitledBorder("Flotte ennemie");
-    /** La barre d'état : à qui de jouer, et le résultat du dernier tir. */
-    private final JLabel etat = new JLabel(" ");
-    /** Le nombre de bateaux à flot de chaque côté. */
-    private final JLabel bilan = new JLabel(" ");
-    /** Les boutons du placement manuel. */
-    private final JPanel boutonsPlacement = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 0));
-    /** Le minuteur qui déclenche le tir de l'ordinateur. */
-    private final Timer minuteurOrdinateur;
+    /** Les fichiers du jeu. */
+    private final transient Dossiers dossiers;
+    /** Les préférences : animations et derniers réglages. */
+    private final transient PreferencesJeu preferences;
+    /** Les écrans, un seul visible à la fois. */
+    private final JPanel ecrans = new JPanel(new CardLayout());
+    /** L'écran d'accueil. */
+    private final EcranAccueil accueil;
+    /** L'écran de jeu. */
+    private final EcranJeu jeu;
+    /** L'écran de rejeu. */
+    private final EcranRejeu rejeu;
+    /** L'écran des statistiques. */
+    private final EcranStatistiques statistiques;
+    /** L'écran affiché. */
+    private String ecranCourant = ACCUEIL;
+    /** Relance une partie avec les mêmes réglages. */
+    private final JMenuItem menuRejouer = new JMenuItem("Rejouer avec les mêmes réglages");
+    /** Enregistre la partie en cours sous un autre nom. */
+    private final JMenuItem menuEnregistrer = new JMenuItem("Enregistrer la partie sous…");
+    /** Active ou désactive les animations. */
+    private final JCheckBoxMenuItem menuAnimations = new JCheckBoxMenuItem("Animations");
 
     /**
-     * Construit la fenêtre, sans partie en cours : appeler ensuite {@link #nouvellePartie()}.
+     * Construit la fenêtre sur l'écran d'accueil.
      *
      * @param random le générateur de hasard des placements et de l'ordinateur
+     * @param dossiers les fichiers du jeu
      */
-    public FenetreJeu(Random random) {
+    public FenetreJeu(Random random, Dossiers dossiers) {
         super("Bataille navale");
-        this.random = Objects.requireNonNull(random, "random");
+        Objects.requireNonNull(random, "random");
+        this.dossiers = Objects.requireNonNull(dossiers, "dossiers");
+        this.preferences = PreferencesJeu.charger(dossiers.preferences());
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
-        setJMenuBar(creerMenu());
-
-        JPanel contenu = new JPanel(new BorderLayout(0, 10));
-        contenu.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-        etat.setFont(etat.getFont().deriveFont(Font.BOLD, 15f));
-        contenu.add(etat, BorderLayout.NORTH);
-
-        JPanel grilles = new JPanel(new GridLayout(1, 2, 24, 0));
-        grilles.add(encadrer(grilleJoueur, titreJoueur));
-        grilles.add(encadrer(grilleAdverse, titreAdverse));
-        contenu.add(grilles, BorderLayout.CENTER);
-
-        JButton pivoter = new JButton("Pivoter (R)");
-        pivoter.addActionListener(evenement -> pivoter());
-        JButton hasard = new JButton("Placer le reste au hasard");
-        hasard.addActionListener(evenement -> placerLeResteAuHasard());
-        JButton recommencer = new JButton("Recommencer le placement");
-        recommencer.addActionListener(evenement -> recommencerPlacement());
-        boutonsPlacement.add(pivoter);
-        boutonsPlacement.add(hasard);
-        boutonsPlacement.add(recommencer);
-        boutonsPlacement.setVisible(false);
-
-        JPanel bas = new JPanel(new BorderLayout(0, 8));
-        bas.add(boutonsPlacement, BorderLayout.NORTH);
-        bas.add(creerLegende(), BorderLayout.WEST);
-        bas.add(bilan, BorderLayout.EAST);
-        contenu.add(bas, BorderLayout.SOUTH);
-        setContentPane(contenu);
-
-        grilleAdverse.surClic(this::tirerSur);
-        grilleJoueur.surClic(this::placerSur);
-        grilleJoueur.surSurvol(this::montrerApercu);
-        grilleJoueur.surClicDroit(this::pivoter);
-        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke(KeyEvent.VK_R, 0), "pivoter");
-        getRootPane().getActionMap().put("pivoter", new AbstractAction() {
-            private static final long serialVersionUID = 1L;
-
+        accueil = new EcranAccueil(this);
+        jeu = new EcranJeu(random, dossiers, this);
+        rejeu = new EcranRejeu(this::accueil);
+        statistiques = new EcranStatistiques(this::accueil, this::reinitialiserStatistiques);
+        ecrans.add(accueil, ACCUEIL);
+        ecrans.add(jeu, JEU);
+        ecrans.add(rejeu, REJEU);
+        ecrans.add(statistiques, STATISTIQUES);
+        setContentPane(ecrans);
+        setJMenuBar(creerMenus());
+        appliquerAnimations(preferences.animations());
+        addWindowListener(new WindowAdapter() {
             @Override
-            public void actionPerformed(ActionEvent evenement) {
-                pivoter();
+            public void windowClosed(WindowEvent evenement) {
+                jeu.arreter();
+                rejeu.arreter();
             }
         });
-
-        minuteurOrdinateur = new Timer(DELAI_ORDINATEUR_MS, evenement -> faireJouerOrdinateur());
-        minuteurOrdinateur.setRepeats(false);
+        actualiserAccueil();
         pack();
+        setMinimumSize(new Dimension(Math.min(getWidth(), 980), Math.min(getHeight(), 620)));
         setLocationRelativeTo(null);
     }
 
-    private static JPanel encadrer(PanneauGrille grille, TitledBorder titre) {
-        Font police = UIManager.getFont("TitledBorder.font");
-        if (police != null) {
-            titre.setTitleFont(police.deriveFont(Font.BOLD, 14f));
-        }
-        JPanel cadre = new JPanel(new BorderLayout());
-        cadre.setBorder(BorderFactory.createCompoundBorder(titre, BorderFactory.createEmptyBorder(4, 4, 4, 4)));
-        cadre.add(grille, BorderLayout.CENTER);
-        return cadre;
-    }
+    private JMenuBar creerMenus() {
+        JMenu partie = new JMenu("Partie");
+        partie.setMnemonic(KeyEvent.VK_P);
+        partie.add(element("Nouvelle partie…", KeyEvent.VK_N, () -> nouvellePartie(null)));
+        menuRejouer.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK));
+        menuRejouer.addActionListener(evenement -> jeu.getParametres().ifPresent(this::demarrer));
+        partie.add(menuRejouer);
+        partie.addSeparator();
+        partie.add(element("Ouvrir une partie…", KeyEvent.VK_O, this::ouvrir));
+        menuEnregistrer.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK));
+        menuEnregistrer.addActionListener(evenement -> enregistrerSous());
+        partie.add(menuEnregistrer);
+        partie.addSeparator();
+        partie.add(element("Revoir la dernière partie", 0, this::revoirDernierePartie));
+        partie.add(element("Statistiques", 0, this::statistiques));
+        partie.add(element("Accueil", 0, this::accueil));
+        partie.addSeparator();
+        partie.add(element("Quitter", KeyEvent.VK_Q, this::quitter));
+        partie.addMenuListener(new MenuListener() {
+            @Override
+            public void menuSelected(MenuEvent evenement) {
+                menuRejouer.setEnabled(jeu.getParametres().isPresent());
+                menuEnregistrer.setEnabled(JEU.equals(ecranCourant) && jeu.enregistrement().isPresent());
+            }
 
-    private JMenuBar creerMenu() {
-        JMenu menu = new JMenu("Partie");
-        menu.setMnemonic(KeyEvent.VK_P);
-        JMenuItem nouvelle = new JMenuItem("Nouvelle partie…");
-        nouvelle.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK));
-        nouvelle.addActionListener(evenement -> nouvellePartie());
-        JMenuItem rejouer = new JMenuItem("Rejouer avec les mêmes réglages");
-        rejouer.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK));
-        rejouer.addActionListener(evenement -> demarrer(parametres));
-        JMenuItem quitter = new JMenuItem("Quitter");
-        quitter.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Q, InputEvent.CTRL_DOWN_MASK));
-        quitter.addActionListener(evenement -> dispose());
-        menu.add(nouvelle);
-        menu.add(rejouer);
-        menu.addSeparator();
-        menu.add(quitter);
+            @Override
+            public void menuDeselected(MenuEvent evenement) {
+                // rien à faire quand le menu se referme
+            }
+
+            @Override
+            public void menuCanceled(MenuEvent evenement) {
+                // rien à faire quand le menu est abandonné
+            }
+        });
+
+        JMenu options = new JMenu("Options");
+        options.setMnemonic(KeyEvent.VK_O);
+        menuAnimations.addActionListener(evenement -> {
+            appliquerAnimations(menuAnimations.isSelected());
+            preferences.setAnimations(menuAnimations.isSelected());
+            sauvegarderPreferences();
+        });
+        options.add(menuAnimations);
+
+        JMenu aide = new JMenu("Aide");
+        aide.setMnemonic(KeyEvent.VK_A);
+        aide.add(element("Règles et commandes", KeyEvent.VK_F1, this::afficherRegles));
+
         JMenuBar barre = new JMenuBar();
-        barre.add(menu);
+        barre.add(partie);
+        barre.add(options);
+        barre.add(aide);
         return barre;
     }
 
-    private static JPanel creerLegende() {
-        JPanel legende = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        legende.add(new JLabel("Eau", new IconeEtat(EtatCase.EAU, COTE_ICONE), JLabel.LEFT));
-        legende.add(new JLabel("Bateau", new IconeEtat(EtatCase.BATEAU, COTE_ICONE), JLabel.LEFT));
-        legende.add(new JLabel("Manqué", new IconeEtat(EtatCase.MANQUE, COTE_ICONE), JLabel.LEFT));
-        legende.add(new JLabel("Touché", new IconeEtat(EtatCase.TOUCHE, COTE_ICONE), JLabel.LEFT));
-        legende.add(new JLabel("Coulé", new IconeEtat(EtatCase.COULE, COTE_ICONE), JLabel.LEFT));
-        return legende;
+    private static JMenuItem element(String texte, int touche, Runnable action) {
+        JMenuItem element = new JMenuItem(texte);
+        if (touche == KeyEvent.VK_F1) {
+            element.setAccelerator(KeyStroke.getKeyStroke(touche, 0));
+        } else if (touche != 0) {
+            element.setAccelerator(KeyStroke.getKeyStroke(touche, InputEvent.CTRL_DOWN_MASK));
+        }
+        element.addActionListener(evenement -> action.run());
+        return element;
     }
 
-    /**
-     * Demande les paramètres d'une nouvelle partie, puis la lance. Si le joueur annule alors qu'aucune partie
-     * n'est en cours, une partie est lancée avec les paramètres par défaut.
-     */
-    public void nouvellePartie() {
-        Optional<ParametresPartie> choix = DialogueParametres.demander(this, parametres);
-        if (choix.isPresent()) {
-            demarrer(choix.get());
-        } else if (partie == null && !enPlacement()) {
-            demarrer(parametres);
+    private void appliquerAnimations(boolean actives) {
+        menuAnimations.setSelected(actives);
+        jeu.setAnimations(actives);
+        rejeu.setAnimations(actives);
+    }
+
+    private void montrer(String ecran) {
+        ecranCourant = ecran;
+        ((CardLayout) ecrans.getLayout()).show(ecrans, ecran);
+    }
+
+    // ----- Navigation -----
+
+    @Override
+    public void accueil() {
+        jeu.arreter();
+        rejeu.arreter();
+        actualiserAccueil();
+        montrer(ACCUEIL);
+    }
+
+    @Override
+    public void rejouer(ParametresPartie parametres) {
+        demarrer(parametres);
+    }
+
+    @Override
+    public void revoir(EnregistrementPartie enregistrement) {
+        try {
+            rejeu.charger(enregistrement);
+        } catch (IllegalArgumentException e) {
+            erreur("Cette partie ne peut pas être revue", e.getMessage());
+            return;
+        }
+        jeu.arreter();
+        montrer(REJEU);
+    }
+
+    @Override
+    public void jouerContreOrdinateur() {
+        nouvellePartie(ModeJeu.CONTRE_ORDINATEUR);
+    }
+
+    @Override
+    public void jouerADeux() {
+        nouvellePartie(ModeJeu.DEUX_JOUEURS);
+    }
+
+    @Override
+    public void reprendre() {
+        lireDernierePartie().ifPresent(this::reprendre);
+    }
+
+    @Override
+    public void revoirDernierePartie() {
+        lireDernierePartie().ifPresent(this::revoir);
+    }
+
+    @Override
+    public void ouvrir() {
+        JFileChooser selecteur = selecteur();
+        if (selecteur.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        EnregistrementPartie enregistrement;
+        boolean terminee;
+        try {
+            enregistrement = FichierPartie.lire(selecteur.getSelectedFile().toPath());
+            terminee = enregistrement.estTerminee();
+        } catch (IOException | IllegalArgumentException e) {
+            erreur("Ouverture impossible", e.getMessage());
+            return;
+        }
+        if (terminee) {
+            revoir(enregistrement);
+        } else {
+            reprendre(enregistrement);
         }
     }
 
+    @Override
+    public void statistiques() {
+        jeu.arreter();
+        rejeu.arreter();
+        try {
+            statistiques.afficher(ResumeStatistiques.lignes(StatistiquesCumulees.charger(dossiers.statistiques())),
+                    null);
+        } catch (IOException | IllegalArgumentException e) {
+            statistiques.afficher(List.of(), e.getMessage());
+        }
+        montrer(STATISTIQUES);
+    }
+
+    @Override
+    public void quitter() {
+        dispose();
+    }
+
     /**
-     * Lance une partie : placement manuel ou aléatoire de la flotte du joueur, puis premier tir.
+     * Demande les réglages d'une nouvelle partie, puis la lance.
      *
-     * @param choisis les paramètres de la partie
+     * @param mode le mode proposé, ou {@code null} pour celui de la partie précédente
      */
-    void demarrer(ParametresPartie choisis) {
-        minuteurOrdinateur.stop();
-        parametres = choisis;
-        partie = null;
-        ConfigurationPartie configuration = choisis.configuration();
-        plateauJoueur = new Plateau(configuration.taille());
-        titreJoueur.setTitle("Votre flotte (" + choisis.nomJoueur() + ")");
-        String difficulte = choisis.difficulte().getNom().toLowerCase(Locale.ROOT);
-        titreAdverse.setTitle("Flotte ennemie (difficulté " + difficulte + ")");
-        grilleAdverse.afficher(configuration.taille(), coordonnee -> EtatCase.INCONNUE, List.of());
-        grilleAdverse.setInteractif(false);
-        grilleJoueur.setDernierTir(null);
-        if (choisis.placementManuel()) {
-            aPlacer = configuration.flotte();
-            indexAPlacer = 0;
-            orientation = Orientation.HORIZONTALE;
-            boutonsPlacement.setVisible(true);
-            grilleJoueur.setInteractif(true);
-            afficherPlacement();
-        } else {
-            PlacementAleatoire.placer(plateauJoueur, configuration.flotte(), random);
-            commencerPartie();
-        }
-        pack();
+    void nouvellePartie(ModeJeu mode) {
+        ParametresPartie precedents = preferences.derniersParametres();
+        Optional<ParametresPartie> choix = DialogueParametres.demander(this,
+                mode == null ? precedents : precedents.avecMode(mode));
+        choix.ifPresent(this::demarrer);
     }
 
-    private boolean enPlacement() {
-        return partie == null && indexAPlacer < aPlacer.size();
+    private void demarrer(ParametresPartie parametres) {
+        preferences.setDerniersParametres(parametres);
+        sauvegarderPreferences();
+        rejeu.arreter();
+        montrer(JEU);
+        jeu.demarrer(parametres);
     }
 
-    private void afficherPlacement() {
-        int taille = plateauJoueur.getTaille();
-        grilleJoueur.afficher(taille, plateauJoueur::getEtatPourProprietaire, plateauJoueur.getBateaux());
-        TypeBateau type = aPlacer.get(indexAPlacer);
-        etat.setText("Placez " + type.getNomAvecArticle() + " (" + type.getLongueur() + " cases, "
-                + (orientation == Orientation.HORIZONTALE ? "horizontal" : "vertical")
-                + ") : cliquez sur votre grille. Clic droit ou R pour pivoter.");
-        bilan.setText("Bateau " + (indexAPlacer + 1) + " sur " + aPlacer.size());
-    }
-
-    private void montrerApercu(Coordonnee survol) {
-        if (!enPlacement() || survol == null) {
-            grilleJoueur.setApercu(List.of(), true);
+    private void reprendre(EnregistrementPartie enregistrement) {
+        rejeu.arreter();
+        try {
+            jeu.reprendre(enregistrement);
+        } catch (IllegalArgumentException e) {
+            erreur("Reprise impossible", e.getMessage());
             return;
         }
-        TypeBateau type = aPlacer.get(indexAPlacer);
-        Bateau candidat = new Bateau(type, survol, orientation);
-        grilleJoueur.setApercu(candidat.getCases(), plateauJoueur.peutPlacer(type, survol, orientation));
+        montrer(JEU);
     }
 
-    private void placerSur(Coordonnee coordonnee) {
-        if (!enPlacement()) {
+    private Optional<EnregistrementPartie> lireDernierePartie() {
+        try {
+            return Optional.of(FichierPartie.lire(dossiers.dernierePartie()));
+        } catch (IOException e) {
+            erreur("Lecture impossible", e.getMessage());
+            actualiserAccueil();
+            return Optional.empty();
+        }
+    }
+
+    private void enregistrerSous() {
+        Optional<EnregistrementPartie> enregistrement = jeu.enregistrement();
+        if (!JEU.equals(ecranCourant) || enregistrement.isEmpty()) {
             return;
         }
-        TypeBateau type = aPlacer.get(indexAPlacer);
-        Optional<String> refus = plateauJoueur.raisonRefusPlacement(type, coordonnee, orientation);
-        if (refus.isPresent()) {
-            etat.setText(refus.get() + " Choisissez une autre case.");
+        JFileChooser selecteur = selecteur();
+        String nom = "partie-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmm")) + ".txt";
+        selecteur.setSelectedFile(new File(selecteur.getCurrentDirectory(), nom));
+        if (selecteur.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
-        plateauJoueur.placer(type, coordonnee, orientation);
-        indexAPlacer++;
-        if (indexAPlacer == aPlacer.size()) {
-            terminerPlacement();
-        } else {
-            afficherPlacement();
-            montrerApercu(coordonnee);
+        Path fichier = selecteur.getSelectedFile().toPath();
+        if (!fichier.getFileName().toString().contains(".")) {
+            fichier = fichier.resolveSibling(fichier.getFileName() + ".txt");
         }
-    }
-
-    private void pivoter() {
-        if (enPlacement()) {
-            orientation = orientation.inverse();
-            afficherPlacement();
-            montrerApercu(grilleJoueur.getSurvol());
-        }
-    }
-
-    private void placerLeResteAuHasard() {
-        if (enPlacement()) {
-            PlacementAleatoire.placer(plateauJoueur, aPlacer.subList(indexAPlacer, aPlacer.size()), random);
-            terminerPlacement();
-        }
-    }
-
-    private void recommencerPlacement() {
-        if (enPlacement()) {
-            plateauJoueur.retirerTout();
-            indexAPlacer = 0;
-            afficherPlacement();
-        }
-    }
-
-    private void terminerPlacement() {
-        aPlacer = List.of();
-        indexAPlacer = 0;
-        boutonsPlacement.setVisible(false);
-        grilleJoueur.setApercu(List.of(), true);
-        grilleJoueur.setInteractif(false);
-        commencerPartie();
-    }
-
-    private void commencerPartie() {
-        partie = parametres.creerPartie(plateauJoueur, random);
-        rafraichirGrilles();
-        grilleAdverse.setInteractif(true);
-        etat.setText("À vous de tirer : cliquez sur une case de la flotte ennemie.");
-    }
-
-    private void rafraichirGrilles() {
-        Joueur joueur = partie.getJoueur1();
-        Plateau plateauAdverse = partie.getJoueur2().getPlateau();
-        VuePlateau vue = plateauAdverse.getVueAdverse();
-        int taille = plateauAdverse.getTaille();
-        grilleJoueur.afficher(taille, joueur.getPlateau()::getEtatPourProprietaire, joueur.getPlateau().getBateaux());
-        grilleAdverse.afficher(taille, vue::getEtat, vue.getBateauxCoules());
-        int nombre = partie.getConfiguration().flotte().size();
-        bilan.setText("Bateaux à flot : vous " + joueur.getPlateau().getNombreBateauxRestants() + "/" + nombre
-                + "  ·  ordinateur " + plateauAdverse.getNombreBateauxRestants() + "/" + nombre);
-    }
-
-    private void tirerSur(Coordonnee cible) {
-        if (partie == null || partie.estTerminee() || !partie.getJoueurCourant().estHumain()) {
+        if (Files.exists(fichier) && JOptionPane.showConfirmDialog(this, "Remplacer " + fichier.getFileName() + " ?",
+                "Le fichier existe déjà", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
             return;
         }
-        if (partie.getJoueur2().getPlateau().getVueAdverse().getEtat(cible) != EtatCase.INCONNUE) {
-            etat.setText("Vous avez déjà tiré en " + cible + " : choisissez une autre case.");
-            return;
+        try {
+            FichierPartie.ecrire(enregistrement.get(), fichier);
+        } catch (IOException e) {
+            erreur("Enregistrement impossible", e.getMessage());
         }
-        Tir tir = partie.tirer(cible);
-        rafraichirGrilles();
-        if (partie.estTerminee()) {
-            terminerPartie();
-            return;
-        }
-        grilleAdverse.setInteractif(false);
-        etat.setText(Annonces.tirDuJoueur(tir) + " L'ordinateur vise…");
-        minuteurOrdinateur.restart();
     }
 
-    private void faireJouerOrdinateur() {
-        if (partie == null || partie.estTerminee() || partie.getJoueurCourant().estHumain()) {
-            return;
+    private JFileChooser selecteur() {
+        Path dossier = dossiers.parties();
+        try {
+            Files.createDirectories(dossier);
+        } catch (IOException e) {
+            dossier = Path.of(System.getProperty("user.home"));
         }
-        Tir tir = partie.faireJouerOrdinateur();
-        grilleJoueur.setDernierTir(tir.cible());
-        rafraichirGrilles();
-        if (partie.estTerminee()) {
-            terminerPartie();
-            return;
-        }
-        grilleAdverse.setInteractif(true);
-        etat.setText(Annonces.tirDeLOrdinateur(tir) + " À vous de tirer.");
+        JFileChooser selecteur = new JFileChooser(dossier.toFile());
+        selecteur.setFileFilter(new FileNameExtensionFilter("Parties de bataille navale (*.txt)", "txt"));
+        return selecteur;
     }
 
-    private void terminerPartie() {
-        grilleAdverse.setInteractif(false);
-        Joueur joueur = partie.getJoueur1();
-        Joueur ordinateur = partie.getJoueur2();
-        Plateau plateauAdverse = ordinateur.getPlateau();
-        grilleAdverse.afficher(plateauAdverse.getTaille(), plateauAdverse::getEtatPourProprietaire,
-                plateauAdverse.getBateaux());
-        titreAdverse.setTitle("Flotte ennemie dévoilée");
-        repaint();
-        boolean victoire = partie.getGagnant().orElseThrow() == joueur;
-        String titre = victoire ? "Victoire !" : "Défaite";
-        String phrase = victoire ? "Vous avez coulé toute la flotte ennemie."
-                : "L'ordinateur a coulé toute votre flotte.";
-        etat.setText(titre + " " + phrase);
-        String message = phrase + "\n\nVous : " + Annonces.bilan(partie.getStatistiques(joueur))
-                + "\nOrdinateur : " + Annonces.bilan(partie.getStatistiques(ordinateur));
-        Object[] options = {"Rejouer", "Nouvelle partie…", "Fermer"};
-        int choix = JOptionPane.showOptionDialog(this, message, titre, JOptionPane.DEFAULT_OPTION,
-                victoire ? JOptionPane.INFORMATION_MESSAGE : JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-        if (choix == 0) {
-            demarrer(parametres);
-        } else if (choix == 1) {
-            nouvellePartie();
+    private void reinitialiserStatistiques() {
+        int reponse = JOptionPane.showConfirmDialog(this, "Effacer toutes vos statistiques ? Cette action est "
+                + "définitive.", "Réinitialiser les statistiques", JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+        if (reponse != JOptionPane.YES_OPTION) {
+            return;
         }
+        try {
+            StatistiquesCumulees cumul = StatistiquesCumulees.charger(dossiers.statistiques());
+            cumul.reinitialiser();
+            cumul.sauvegarder();
+        } catch (IOException | IllegalArgumentException e) {
+            erreur("Réinitialisation impossible", e.getMessage());
+        }
+        statistiques();
+    }
+
+    /** Met à jour l'accueil d'après les fichiers : partie à reprendre, dernière partie, statistiques. */
+    private void actualiserAccueil() {
+        Optional<String> interrompue = Optional.empty();
+        boolean derniere = false;
+        if (Files.isRegularFile(dossiers.dernierePartie())) {
+            try {
+                EnregistrementPartie enregistrement = FichierPartie.lire(dossiers.dernierePartie());
+                derniere = true;
+                if (!enregistrement.estTerminee()) {
+                    interrompue = Optional.of(enregistrement.decrire());
+                }
+            } catch (IOException | IllegalArgumentException e) {
+                derniere = false;
+            }
+        }
+        Optional<String> resume = Optional.empty();
+        try {
+            StatistiquesCumulees cumul = StatistiquesCumulees.charger(dossiers.statistiques());
+            if (cumul.getParties() > 0) {
+                resume = Optional.of(ResumeStatistiques.enUneLigne(cumul));
+            }
+        } catch (IOException | IllegalArgumentException e) {
+            resume = Optional.empty();
+        }
+        accueil.actualiser(interrompue, derniere, resume);
+    }
+
+    private void sauvegarderPreferences() {
+        try {
+            preferences.sauvegarder();
+        } catch (IOException e) {
+            // les préférences ne seront simplement pas retenues pour la prochaine fois
+        }
+    }
+
+    private void erreur(String titre, String message) {
+        JOptionPane.showMessageDialog(this, new JLabel(Textes.paragraphe(message, 380)), titre,
+                JOptionPane.ERROR_MESSAGE);
+    }
+
+    private void afficherRegles() {
+        StringBuilder texte = new StringBuilder();
+        texte.append("Chaque joueur cache sa flotte sur sa grille. À tour de rôle, on tire sur une case de la grille ")
+                .append("adverse : manqué, touché, ou coulé quand toutes les cases d'un bateau sont touchées. ")
+                .append("Le premier qui coule toute la flotte adverse gagne.\n\n")
+                .append("Capacités spéciales (si elles sont activées) : chacune sert une fois par partie, une seule ")
+                .append("par tour, avant de tirer.\n");
+        for (Capacite capacite : Capacite.values()) {
+            texte.append("• ").append(capacite.getNom()).append(" : ").append(capacite.getDescription()).append(".\n");
+        }
+        texte.append("\nCommandes : clic gauche pour tirer ou poser un bateau ; clic droit ou R pour pivoter un ")
+                .append("bateau ou la torpille ; Échap pour annuler une capacité ; cliquer sur un bateau posé le ")
+                .append("reprend pour le déplacer.\n\n")
+                .append("À deux, les grilles se cachent entre les tours : passez la souris à l'autre joueur.\n")
+                .append("La partie est enregistrée après chaque coup : vous pouvez la reprendre ou la revoir depuis ")
+                .append("l'accueil.");
+        JOptionPane.showMessageDialog(this, new JLabel(Textes.paragraphe(texte.toString(), 440)),
+                "Règles et commandes", JOptionPane.INFORMATION_MESSAGE);
     }
 }
